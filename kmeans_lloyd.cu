@@ -4,9 +4,11 @@
 
 #include "kmeans.h"
 
+//Define some counters on device for access to changes
+__device__ uint32_t mem_change_ctr;
 //Define these constant variables that are going to be that way for the entire
 //experiment
-__constant__ uint32_t num_features_dim;
+__constant__ uint32_t num_features;
 __constant__ uint32_t num_samples;
 __constant__ uint32_t num_clusters;
 __constant__ uint32_t shmem_size;
@@ -25,13 +27,13 @@ __device__ float distance( float *sample1, float * sample2, uint32_t
 // is going to be the dataset size.
 // incr2 - memory jumps to access next feature of point 2. Typically in our case
 // is going to be the number of centroids K.
-// num_features_dim - assumed to be in constant memory indicates feature dimension
+// num_features - assumed to be in constant memory indicates feature dimension
 // space
 __device__ float distance( float *sample1, float *sample2, uint32_t incr1,
         uint32_t incr2)
 {
     int ret_distance = 0;
-    for(int i=0;i<num_features_dim;i++)
+    for(int i=0;i<num_features;i++)
         ret_distance +=
             (sample1[i*incr1]-sample2[i*incr2])*(sample1[i*incr1]-sample2[i*incr2]);
     return ret_distance;
@@ -55,7 +57,7 @@ __global__ void nearest_cluster_assign( float *samples, float *centroids,
     //TODO: Check back to see if this calculation is right or sizeof(float)
     //incorporated elsewhere
     const uint32_t max_shared_centroids =
-        shmem_size/(num_features_dim*sizeof(float));
+        shmem_size/(num_features*sizeof(float));
     //TODO: define min if needed
     const uint32_t thread_num_shared_process =
         ceilf(max_shared_centroids/min(blockDim.x, num_samples - blockIdx.x *
@@ -72,7 +74,7 @@ __global__ void nearest_cluster_assign( float *samples, float *centroids,
             //Confused in offsets, put a conditional here to be safe
             if(global_offset<num_clusters && local_offset<max_shared_centroids)
             {
-                for(uint32_t feature_idx=0; feature_idx<num_features_dim;
+                for(uint32_t feature_idx=0; feature_idx<num_features;
                         feature_idx++)
                 {
                     shared_centroids[feature_idx*num_clusters + local_offset] =
@@ -107,7 +109,7 @@ __global__ void adjust_centroids( float *samples, float *centroids, uint32_t
     uint32_t cluster_count = cluster_counts[centroid_idx];
     //multiply each centroid by it's count to make it ready for adjustments -
     //neccessary evil of globalmemory writes
-    for(uint32_t i = 0; i < num_features_dim; i++)
+    for(uint32_t i = 0; i < num_features; i++)
     {
         centroids[i*num_clusters] *= cluster_count;
     }
@@ -153,7 +155,7 @@ __global__ void adjust_centroids( float *samples, float *centroids, uint32_t
             if(sign)
             {
                 uint32_t sample_offset = sample_start + i;
-                for(uint32_t feature = 0; feature < num_features_dim; feature++)
+                for(uint32_t feature = 0; feature < num_features; feature++)
                 {
                     centroids[feature * num_clusters] += sign *
                         samples[sample_offset + feature * num_samples];
@@ -162,16 +164,48 @@ __global__ void adjust_centroids( float *samples, float *centroids, uint32_t
         }
     }
     // Average the centroid
-    for(uint32_t i = 0; i < num_features_dim; i++)
+    for(uint32_t i = 0; i < num_features; i++)
         centroids[i*num_clusters] /= cluster_count;
     //Write back local count to memory
     cluster_counts[centroid_idx] = cluster_count;
 }
 
-cudaError_t kmeans_cuda( InitMethod init, float tolerance, uint32_t num_samples,
-        uint32_t num_features, uint32_t num_clusters_size, uint32_t seed, const
+//------------------------Host Functions--------------------------------
+
+cudaError_t initTasks(uint32_t n_samples, uint32_t n_clusters, uint32_t
+        n_features, int dev_num=0)
+{
+    gpuErrchk(cudaMemcpyToSymbol(num_samples, &n_samples, sizeof(n_samples)));
+    gpuErrchk(cudaMemcpyToSymbol(num_clusters, &n_clusters, sizeof(n_clusters)));
+    gpuErrchk(cudaMemcpyToSymbol(num_features, &n_features, sizeof(n_features)));
+    cudaDeviceProp props;
+    gpuErrchk(cudaSetDevice(dev_num));
+    gpuErrchk(cudaGetDeviceProperties(&props, dev_num));
+    uint32_t smem_size = props.sharedMemPerBlock;
+    printf("gpu %d has %d bytes of shared memory\n", dev_num, smem_size); 
+    gpuErrchk(cudaMemcpyToSymbol(shmem_size, &smem_size, sizeof(smem_size)));
+    uint32_t zero = 0;
+    gpuErrchk(cudaMemcpyToSymbol(mem_change_ctr, &zero, sizeof(zero)));
+    return cudaSuccess;
+}
+
+int check_change_ratio(float tolerance, uint32_t n_samples)
+{
+    uint32_t num_changes = 0;
+    gpuErrchk(cudaMemcpyFromSymbol(&num_changes, mem_change_ctr,
+                sizeof(num_changes)));
+    if(num_changes <= tolerance * n_samples)
+        return -1;
+    uint32_t zero = 0;
+    gpuErrchk(cudaMemcpyToSymbol(mem_change_ctr, &zero, sizeof(zero)));
+    return 0;
+}
+
+cudaError_t kmeans_cuda( InitMethod init, float tolerance, uint32_t n_samples,
+        uint32_t n_features, uint32_t n_clusters_size, uint32_t seed, const
         float *samples, float *centroids, uint32_t *memberships)
 {
+    gpuErrchk(initTasks(n_samples, n_clusters_size, n_features));
     return cudaSuccess;
 }
 

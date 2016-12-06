@@ -29,10 +29,13 @@ enum InitMethod { InitMethodRandom = 0, InitMethodPlusPlus, InitMethodImport };
 /// @param seed random generator seed passed to srand().
 /// @param samples input array of sample points
 /// @param centroids output array of centroids
-/// @param assignments output array of cluster indices
+/// @param memberships array of cluster indices
 /// @return cudaError_t
-cudaError_t kmeans_cuda(InitMethod init, float tolerance, uint32_t num_samples,
-                        uint32_t num_features, uint32_t num_clusters_size,
+//
+// Assume samples,centroids,memberships to be already initialized arrays in
+// device
+cudaError_t kmeans_cuda(InitMethod init, float tolerance, uint32_t n_samples,
+                        uint32_t n_features, uint32_t n_clusters_size,
                         uint32_t seed, const float *samples, float *centroids,
                         uint32_t *memberships);
 
