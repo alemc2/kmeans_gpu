@@ -4,7 +4,8 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <cuda_profiler_api.h>
-#include <cstdint>
+#include <math.h>
+#include <stdint.h>
 
 #define gpuErrchk(ans) \
     { gpuAssert((ans), __FILE__, __LINE__); }
@@ -17,11 +18,7 @@ inline void gpuAssert(cudaError_t code, const char *file, int line,
     }
 }
 
-enum InitMethod {
-  InitMethodRandom = 0,
-  InitMethodPlusPlus,
-  InitMethodImport
-};
+enum InitMethod { InitMethodRandom = 0, InitMethodPlusPlus, InitMethodImport };
 
 /// @brief Performs K-means clustering on GPU / CUDA.
 /// @param init centroids initialization method.
@@ -34,8 +31,9 @@ enum InitMethod {
 /// @param centroids output array of centroids
 /// @param assignments output array of cluster indices
 /// @return cudaError_t
-cudaError_t kmeans_cuda( InitMethod init, float tolerance, uint32_t num_samples,
-        uint32_t num_features, uint32_t num_clusters_size, uint32_t seed, const
-        float *samples, float *centroids, uint32_t *memberships);
+cudaError_t kmeans_cuda(InitMethod init, float tolerance, uint32_t num_samples,
+                        uint32_t num_features, uint32_t num_clusters_size,
+                        uint32_t seed, const float *samples, float *centroids,
+                        uint32_t *memberships);
 
 #endif
