@@ -4,6 +4,9 @@
 
 #include "kmeans.h"
 
+#define BLOCK_SZ_CNT_ASS 256
+#define BLOCK_SZ_CNT_ADJ 256
+
 //Define some counters on device for access to changes
 __device__ uint32_t mem_change_ctr;
 //Define these constant variables that are going to be that way for the entire
@@ -172,7 +175,7 @@ __global__ void adjust_centroids( float *samples, float *centroids, uint32_t
 
 //------------------------Host Functions--------------------------------
 
-cudaError_t initTasks(uint32_t n_samples, uint32_t n_clusters, uint32_t
+uint32_t initTasks(uint32_t n_samples, uint32_t n_clusters, uint32_t
         n_features, int dev_num=0)
 {
     gpuErrchk(cudaMemcpyToSymbol(num_samples, &n_samples, sizeof(n_samples)));
@@ -186,7 +189,7 @@ cudaError_t initTasks(uint32_t n_samples, uint32_t n_clusters, uint32_t
     gpuErrchk(cudaMemcpyToSymbol(shmem_size, &smem_size, sizeof(smem_size)));
     uint32_t zero = 0;
     gpuErrchk(cudaMemcpyToSymbol(mem_change_ctr, &zero, sizeof(zero)));
-    return cudaSuccess;
+    return smem_size;
 }
 
 int check_change_ratio(float tolerance, uint32_t n_samples)
@@ -202,10 +205,37 @@ int check_change_ratio(float tolerance, uint32_t n_samples)
 }
 
 cudaError_t kmeans_cuda( InitMethod init, float tolerance, uint32_t n_samples,
-        uint32_t n_features, uint32_t n_clusters_size, uint32_t seed, const
-        float *samples, float *centroids, uint32_t *memberships)
+        uint32_t n_features, uint32_t n_clusters, uint32_t seed, float
+        *samples, float *centroids, uint32_t *memberships, int *iterations =
+        NULL)
 {
-    gpuErrchk(initTasks(n_samples, n_clusters_size, n_features));
+    uint32_t smem_size = initTasks(n_samples, n_clusters, n_features);
+    dim3 sample_block(BLOCK_SZ_CNT_ASS);
+    dim3 centroid_block(BLOCK_SZ_CNT_ADJ);
+    dim3 sample_grid(ceil(n_samples/sample_block.x));
+    dim3 centroid_grid(ceil(n_clusters/centroid_block.x));
+    uint32_t *memberships_old, *cluster_counts;
+    gpuErrchk(cudaMalloc((void **) &memberships_old,
+                n_samples*sizeof(uint32_t)));
+    gpuErrchk(cudaMalloc((void **) &cluster_counts,
+                n_clusters*sizeof(uint32_t)));
+    gpuErrchk(cudaMemset(cluster_counts, 0, n_clusters*sizeof(uint32_t)));
+    //arbitrary - set maxiter to 500
+    for(int i = 0; i < 500; i++)
+    {
+        nearest_cluster_assign<<<sample_grid,sample_block,smem_size>>>( samples,
+                centroids, memberships, memberships_old);
+        gpuErrchk( cudaPeekAtLastError() );
+        int change_ratio_good = check_change_ratio(tolerance, n_samples);
+        if(change_ratio_good<0)
+        {
+            if(iterations)
+                *iterations = i;
+            return cudaSuccess;
+        }
+        adjust_centroids<<<centroid_grid,centroid_block,smem_size>>>( samples,
+                centroids, memberships, memberships_old, cluster_counts);
+        gpuErrchk( cudaPeekAtLastError() );
+    }
     return cudaSuccess;
 }
-

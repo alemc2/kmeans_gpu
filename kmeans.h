@@ -6,6 +6,8 @@
 #include <cuda_profiler_api.h>
 #include <math.h>
 #include <stdint.h>
+#include <stdlib.h>
+#include <stdio.h>
 
 #define gpuErrchk(ans) \
     { gpuAssert((ans), __FILE__, __LINE__); }
@@ -19,6 +21,11 @@ inline void gpuAssert(cudaError_t code, const char *file, int line,
 }
 
 enum InitMethod { InitMethodRandom = 0, InitMethodPlusPlus, InitMethodImport };
+
+__host__ __device__ int copy_vectors(float *dst_vec, float *src_vec,
+                                     const uint32_t n_dim,
+                                     const uint32_t dst_skip,
+                                     const uint32_t src_skip);
 
 /// @brief Performs K-means clustering on GPU / CUDA.
 /// @param init centroids initialization method.
@@ -35,8 +42,12 @@ enum InitMethod { InitMethodRandom = 0, InitMethodPlusPlus, InitMethodImport };
 // Assume samples,centroids,memberships to be already initialized arrays in
 // device
 cudaError_t kmeans_cuda(InitMethod init, float tolerance, uint32_t n_samples,
-                        uint32_t n_features, uint32_t n_clusters_size,
-                        uint32_t seed, const float *samples, float *centroids,
-                        uint32_t *memberships);
+                        uint32_t n_features, uint32_t n_clusters, uint32_t seed,
+                        float *samples, float *centroids, uint32_t *memberships,
+                        int *iterations);
+
+int init_centroids(InitMethod method, uint32_t n_samples, uint32_t n_features,
+                   uint32_t n_clusters, uint32_t seed, float *h_samples,
+                   float *h_centroids);
 
 #endif
