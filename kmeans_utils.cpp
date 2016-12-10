@@ -27,7 +27,7 @@ float *transpose(float *src, uint32_t n_samples, uint32_t n_features) {
 }
 
 void print1d(uint32_t *src, uint32_t dim) {
-    for (uint32_t i = 0; i < dim; i++) printf("%d ", src[i]);
+    for (uint32_t i = 0; i < dim; i++) printf("%u ", src[i]);
     printf("\n");
 }
 

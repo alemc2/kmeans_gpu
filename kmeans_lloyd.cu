@@ -48,7 +48,7 @@ __device__ float distance( float *sample1, float * sample2, uint32_t
 __device__ float distance( float *sample1, float *sample2, uint32_t incr1,
         uint32_t incr2)
 {
-    int ret_distance = 0;
+    float ret_distance = 0;
     for(int i=0;i<num_features;i++)
         ret_distance +=
             (sample1[i*incr1]-sample2[i*incr2])*(sample1[i*incr1]-sample2[i*incr2]);
@@ -129,6 +129,13 @@ __global__ void adjust_centroids( float *samples, float *centroids, uint32_t
         return;
     centroids += centroid_idx;
     uint32_t cluster_count = cluster_counts[centroid_idx];
+    //if(d_debug)
+    //{
+    //    for(uint32_t tmp = 0; tmp < num_features; tmp++)
+    //        printf("printing pre-centroid id=%u feature %u: %f with count %u\n", centroid_idx,
+    //                tmp, centroids[index(tmp,0,num_clusters)], cluster_count);
+    //}
+
     //multiply each centroid by it's count to make it ready for adjustments -
     //neccessary evil of globalmemory writes
     for(uint32_t i = 0; i < num_features; i++)
@@ -142,55 +149,146 @@ __global__ void adjust_centroids( float *samples, float *centroids, uint32_t
     uint32_t nactive_threads = min(blockDim.x, num_clusters - blockIdx.x *
             blockDim.x);
     uint32_t samples_per_thread = ceilf(sample_step/nactive_threads);
-    for(uint32_t sample_start = 0; sample_start < num_samples; sample_start +=
-            sample_step)
+    //Mask off shared mem stuff for now.
+    //for(uint32_t sample_start = 0; sample_start < num_samples; sample_start +=
+    //        sample_step)
+    //{
+    //    for(uint32_t i=0; i<samples_per_thread; i++)
+    //    {
+    //        uint32_t local_offset = i * nactive_threads + threadIdx.x;
+    //        uint32_t global_offset = local_offset + sample_start;
+    //        if(global_offset < num_samples && local_offset < sample_step)
+    //        {
+    //            shared_memberships[2*local_offset] = membership[global_offset];
+    //            shared_memberships[2*local_offset+1] = membership_old[global_offset];
+    //        }
+    //    }
+    //    __syncthreads();
+    //    //Now each thread is going to scan all the shared samples
+    //    for(uint32_t i=0; i < sample_step && sample_start + i < num_samples;
+    //            i++)
+    //    {
+    //        uint32_t local_membership = shared_memberships[2*i];
+    //        uint32_t local_membership_prev = shared_memberships[2*i+1];
+    //        int sign = 0;
+    //        if(local_membership_prev == centroid_idx && local_membership !=
+    //                centroid_idx)
+    //        {
+    //            //if(d_debug && cluster_count == 0)
+    //            //{
+    //            //    printf("Cluster count 0 decrement triggered for cluster=%u,"
+    //            //            " on sample %u - membersip changed from %u to %u\n",
+    //            //            centroid_idx, sample_start + i,
+    //            //            local_membership_prev, local_membership);
+    //            //    for(uint32_t tmp = 0; tmp < num_samples; tmp++)
+    //            //    {
+    //            //        if(membership_old[tmp] == centroid_idx)
+    //            //            printf("Cluster %u found for sample %u with chenge"
+    //            //                    "to %u\n", centroid_idx, tmp,
+    //            //                    membership[tmp]);
+    //            //    }
+    //            //}
+    //            sign = -1;
+    //            cluster_count--;
+    //        }
+    //        else if(local_membership_prev != centroid_idx && local_membership ==
+    //                centroid_idx)
+    //        {
+    //            sign = 1;
+    //            cluster_count++;
+    //        }
+    //        if(sign)
+    //        {
+    //            uint32_t sample_offset = sample_start + i;
+    //            for(uint32_t feature = 0; feature < num_features; feature++)
+    //            {
+    //                centroids[feature * num_clusters] += sign *
+    //                    samples[sample_offset + feature * num_samples];
+    //            }
+    //        }
+    //    }
+    //}
+    for(uint32_t i = 0; i < num_samples; i++)
     {
-        for(uint32_t i=0; i<samples_per_thread; i++)
+        uint32_t local_membership = membership[i];
+        uint32_t local_membership_prev = membership_old[i];
+        int sign = 0;
+        if(local_membership_prev == centroid_idx && local_membership !=
+            centroid_idx)
         {
-            uint32_t local_offset = i * nactive_threads + threadIdx.x;
-            uint32_t global_offset = local_offset + sample_start;
-            if(global_offset < num_samples && local_offset < sample_step)
-            {
-                shared_memberships[2*local_offset] = membership[global_offset];
-                shared_memberships[2*local_offset+1] = membership_old[global_offset];
-            }
+            //if(d_debug && cluster_count == 0)
+            //{
+            //    printf("Cluster count 0 decrement triggered for cluster=%u,"
+            //            " on sample %u - membersip changed from %u to %u\n",
+            //            centroid_idx, i,
+            //            local_membership_prev, local_membership);
+            //    for(uint32_t tmp = 0; tmp < num_samples; tmp++)
+            //    {
+            //        if(membership_old[tmp] == centroid_idx)
+            //            printf("Cluster %u found for sample %u with chenge"
+            //                    "to %u\n", centroid_idx, tmp,
+            //                    membership[tmp]);
+            //    }
+            //}
+            sign = -1;
+            cluster_count--;
         }
-        __syncthreads();
-        //Now each thread is going to scan all the shared samples
-        for(uint32_t i=0; i < sample_step && sample_start + i < num_samples;
-                i++)
+        else if(local_membership_prev != centroid_idx && local_membership ==
+                centroid_idx)
         {
-            uint32_t local_membership = shared_memberships[2*i];
-            uint32_t local_membership_prev = shared_memberships[2*i+1];
-            int sign = 0;
-            if(local_membership_prev == centroid_idx && local_membership !=
-                    centroid_idx)
+            sign = 1;
+            cluster_count++;
+        }
+        if(sign)
+        {
+            for(uint32_t feature = 0; feature < num_features; feature++)
             {
-                sign = -1;
-                cluster_count--;
-            }
-            else if(local_membership_prev != centroid_idx && local_membership ==
-                    centroid_idx)
-            {
-                sign = 1;
-                cluster_count++;
-            }
-            if(sign)
-            {
-                uint32_t sample_offset = sample_start + i;
-                for(uint32_t feature = 0; feature < num_features; feature++)
-                {
-                    centroids[feature * num_clusters] += sign *
-                        samples[sample_offset + feature * num_samples];
-                }
+                centroids[feature * num_clusters] += sign *
+                    samples[i + feature * num_samples];
             }
         }
     }
     // Average the centroid
     for(uint32_t i = 0; i < num_features; i++)
+    {
+        //if(d_debug)
+        //    printf("printing post-centroid unnormalized id=%u feature %u: %f with count %u\n", 
+        //            centroid_idx, i, centroids[index(i,0,num_clusters)], cluster_count);
         centroids[i*num_clusters] /= cluster_count;
+    }
     //Write back local count to memory
     cluster_counts[centroid_idx] = cluster_count;
+    //if(d_debug)
+    //{
+    //    for(uint32_t tmp = 0; tmp < num_features; tmp++)
+    //        printf("printing post-centroid id=%u feature %u: %f with count %u\n", 
+    //                centroid_idx, tmp, centroids[index(tmp,0,num_clusters)],
+    //                cluster_count);
+    //}
+}
+
+//Debugging functions
+__global__ void verify_counts(uint32_t *cluster_counts)
+{
+    uint32_t sum = 0;
+    for(uint32_t i = 0; i < num_clusters; i++)
+    {
+        sum += cluster_counts[i];
+    }
+    if(sum != num_samples)
+        printf("sum of counts (%u) doesn't add up to required (%u)\n", sum,
+                num_samples);
+}
+
+__global__ void verify_memberships(uint32_t *memberships, uint32_t *cc)
+{
+    for(uint32_t i = 0; i < num_samples; i++)
+    {
+        if(memberships[i]<0 || memberships[i]>=num_clusters)
+            printf("membership for %u wrongly assigned to %u", i,
+                    memberships[i]);
+        cc[memberships[i]]++;
+    }
 }
 
 //------------------------Host Functions--------------------------------
@@ -206,7 +304,7 @@ uint32_t initTasks(uint32_t n_samples, uint32_t n_clusters, uint32_t
     gpuErrchk(cudaGetDeviceProperties(&props, dev_num));
     uint32_t smem_size = props.sharedMemPerBlock;
     if(_debug)
-        printf("gpu %d has %d bytes of shared memory\n", dev_num, smem_size); 
+        printf("gpu %d has %u bytes of shared memory\n", dev_num, smem_size); 
     gpuErrchk(cudaMemcpyToSymbol(shmem_size, &smem_size, sizeof(smem_size)));
     uint32_t zero = 0;
     gpuErrchk(cudaMemcpyToSymbol(mem_change_ctr, &zero, sizeof(zero)));
@@ -220,7 +318,7 @@ int check_change_ratio(float tolerance, uint32_t n_samples)
     gpuErrchk(cudaMemcpyFromSymbol(&num_changes, mem_change_ctr,
                 sizeof(num_changes)));
     if(_debug)
-        printf("num changes = %d\n",num_changes);
+        printf("num changes = %u\n",num_changes);
     if(num_changes <= tolerance * n_samples)
         return -1;
     uint32_t zero = 0;
@@ -243,6 +341,14 @@ cudaError_t kmeans_cuda( InitMethod init, float tolerance, uint32_t n_samples,
                 n_samples*sizeof(uint32_t)));
     gpuErrchk(cudaMalloc((void **) &cluster_counts,
                 n_clusters*sizeof(uint32_t)));
+    uint32_t *cc_verification;
+    if(_debug > 1)
+    {
+        gpuErrchk(cudaMalloc((void **) &cc_verification,
+                    n_clusters*sizeof(uint32_t)));
+        gpuErrchk(cudaMemcpy( memberships_old, memberships, n_samples *
+                    sizeof(uint32_t), cudaMemcpyDeviceToDevice));
+    }
     gpuErrchk(cudaMemset(cluster_counts, 0, n_clusters*sizeof(uint32_t)));
     //arbitrary - set maxiter to 500
     for(int i = 0; i < 500; i++)
@@ -250,7 +356,7 @@ cudaError_t kmeans_cuda( InitMethod init, float tolerance, uint32_t n_samples,
         if(_debug)
         {
             printf("In iteration %d\n",i);
-            printf("grid size is %dx%d, block size is %dx%d and shared mem needed is %d\n"
+            printf("grid size is %dx%d, block size is %dx%d and shared mem needed is %u\n"
                     , sample_grid.x, sample_grid.y, sample_block.x,
                     sample_block.y, smem_size);
         }
@@ -259,7 +365,15 @@ cudaError_t kmeans_cuda( InitMethod init, float tolerance, uint32_t n_samples,
         gpuErrchk( cudaPeekAtLastError() );
         int change_ratio_good = check_change_ratio(tolerance, n_samples);
         if(_debug)
+        {
             printf("change ratio is %d\n",change_ratio_good);
+            if(_debug > 1)
+            {
+                gpuErrchk(cudaMemset(cc_verification, 0, n_clusters*sizeof(uint32_t)));
+                verify_memberships<<<1,1>>>(memberships, cc_verification);
+                verify_counts<<<1,1>>>(cc_verification);
+            }
+        }
         if(change_ratio_good<0)
         {
             if(iterations)
@@ -269,6 +383,11 @@ cudaError_t kmeans_cuda( InitMethod init, float tolerance, uint32_t n_samples,
         adjust_centroids<<<centroid_grid,centroid_block,smem_size>>>( samples,
                 centroids, memberships, memberships_old, cluster_counts);
         gpuErrchk( cudaPeekAtLastError() );
+
+        if(_debug > 1)
+        {
+            verify_counts<<<1,1>>>(cluster_counts);
+        }
     }
     return cudaSuccess;
 }

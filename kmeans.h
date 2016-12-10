@@ -25,6 +25,7 @@ inline void gpuAssert(cudaError_t code, const char *file, int line,
 }
 
 enum InitMethod { InitMethodRandom = 0, InitMethodPlusPlus, InitMethodImport };
+typedef enum InitMethod Init_Method;
 
 __host__ __device__ int copy_vectors(float *dst_vec, float *src_vec,
                                      const uint32_t n_dim,
