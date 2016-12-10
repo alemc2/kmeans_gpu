@@ -1,9 +1,6 @@
 
 #include "kmeans.h"
 
-/* To index element (i,j) of a 2D array stored as 1D */
-#define index(i, j, N) ((i) * (N)) + (j)
-
 void shuffle(uint32_t *array, uint32_t n) {
     if (n > 1) {
         uint32_t i;
@@ -27,6 +24,20 @@ float *transpose(float *src, uint32_t n_samples, uint32_t n_features) {
         }
     }
     return dst;
+}
+
+void print1d(uint32_t *src, uint32_t dim) {
+    for (uint32_t i = 0; i < dim; i++) printf("%d ", src[i]);
+    printf("\n");
+}
+
+void print2d(float *src, uint32_t dim1, uint32_t dim2) {
+    for (uint32_t i = 0; i < dim1; i++) {
+        for (uint32_t j = 0; j < dim2; j++) {
+            printf("%f ", src[index(i, j, dim2)]);
+        }
+        printf("\n");
+    }
 }
 
 __host__ __device__ int copy_vectors(float *dst_vec, float *src_vec,

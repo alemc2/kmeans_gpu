@@ -15,6 +15,7 @@ __constant__ uint32_t num_features;
 __constant__ uint32_t num_samples;
 __constant__ uint32_t num_clusters;
 __constant__ uint32_t shmem_size;
+__constant__ int d_debug;
 
 // https://devblogs.nvidia.com/parallelforall/cuda-pro-tip-optimized-filtering-warp-aggregated-atomics/
 __device__ __forceinline__ uint32_t atomicAggInc(uint32_t *ctr) {
@@ -71,12 +72,13 @@ __global__ void nearest_cluster_assign( float *samples, float *centroids,
     extern __shared__ float shared_centroids[];
     //TODO: Check back to see if this calculation is right or sizeof(float)
     //incorporated elsewhere
-    const uint32_t max_shared_centroids =
+    uint32_t max_shared_centroids =
         shmem_size/(num_features*sizeof(float));
     //TODO: define min if needed
-    const uint32_t thread_num_shared_process =
-        ceilf(max_shared_centroids/min(blockDim.x, num_samples - blockIdx.x *
-                blockDim.x));
+    uint32_t nactive_threads = min(blockDim.x, num_samples - blockIdx.x *
+            blockDim.x);
+    uint32_t thread_num_shared_process = ceilf(max_shared_centroids /
+            nactive_threads);
     //Load a batch of centroids to shared and compute pairwise distance between
     //the current point and all centroids
     for(uint32_t centroids_batch=0; centroids_batch<num_clusters;
@@ -84,7 +86,7 @@ __global__ void nearest_cluster_assign( float *samples, float *centroids,
     {
         for(uint32_t i=0; i<thread_num_shared_process; i++)
         {
-            uint32_t local_offset = i * thread_num_shared_process + threadIdx.x;
+            uint32_t local_offset = i * nactive_threads + threadIdx.x;
             uint32_t global_offset = local_offset + centroids_batch;
             //Confused in offsets, put a conditional here to be safe
             if(global_offset<num_clusters && local_offset<max_shared_centroids)
@@ -92,21 +94,21 @@ __global__ void nearest_cluster_assign( float *samples, float *centroids,
                 for(uint32_t feature_idx=0; feature_idx<num_features;
                         feature_idx++)
                 {
-                    shared_centroids[feature_idx*num_clusters + local_offset] =
+                    shared_centroids[feature_idx*max_shared_centroids + local_offset] =
                         centroids[feature_idx*num_clusters + global_offset];
                 }
             }
         }
         __syncthreads();
-        for(uint32_t cluster = centroids_batch; cluster < centroids_batch +
-                max_shared_centroids && cluster < num_clusters; cluster++)
+        for(uint32_t cluster = 0; cluster < max_shared_centroids && cluster <
+                num_clusters - centroids_batch; cluster++)
         {
             float dist = distance(samples, shared_centroids+cluster,
                     num_samples, max_shared_centroids);
             if(dist<min_dist)
             {
                 min_dist = dist;
-                nearest_cluster = cluster;
+                nearest_cluster = cluster + centroids_batch;
             }
         }
     }
@@ -137,14 +139,15 @@ __global__ void adjust_centroids( float *samples, float *centroids, uint32_t
     //Since each membership is of type uint32_t and we have old and new
     //memberships, we can load the memberships to fill half the shared memory
     uint32_t sample_step = shmem_size/(2*sizeof(uint32_t));
-    uint32_t samples_per_thread = ceilf(sample_step/min(blockDim.x, num_clusters
-                - blockDim.x * blockDim.x));
+    uint32_t nactive_threads = min(blockDim.x, num_clusters - blockIdx.x *
+            blockDim.x);
+    uint32_t samples_per_thread = ceilf(sample_step/nactive_threads);
     for(uint32_t sample_start = 0; sample_start < num_samples; sample_start +=
             sample_step)
     {
         for(uint32_t i=0; i<samples_per_thread; i++)
         {
-            uint32_t local_offset = i * samples_per_thread + threadIdx.x;
+            uint32_t local_offset = i * nactive_threads + threadIdx.x;
             uint32_t global_offset = local_offset + sample_start;
             if(global_offset < num_samples && local_offset < sample_step)
             {
@@ -202,10 +205,12 @@ uint32_t initTasks(uint32_t n_samples, uint32_t n_clusters, uint32_t
     gpuErrchk(cudaSetDevice(dev_num));
     gpuErrchk(cudaGetDeviceProperties(&props, dev_num));
     uint32_t smem_size = props.sharedMemPerBlock;
-    printf("gpu %d has %d bytes of shared memory\n", dev_num, smem_size); 
+    if(_debug)
+        printf("gpu %d has %d bytes of shared memory\n", dev_num, smem_size); 
     gpuErrchk(cudaMemcpyToSymbol(shmem_size, &smem_size, sizeof(smem_size)));
     uint32_t zero = 0;
     gpuErrchk(cudaMemcpyToSymbol(mem_change_ctr, &zero, sizeof(zero)));
+    gpuErrchk(cudaMemcpyToSymbol(d_debug, &_debug, sizeof(_debug)));
     return smem_size;
 }
 
@@ -214,7 +219,8 @@ int check_change_ratio(float tolerance, uint32_t n_samples)
     uint32_t num_changes = 0;
     gpuErrchk(cudaMemcpyFromSymbol(&num_changes, mem_change_ctr,
                 sizeof(num_changes)));
-    printf("numchanges = %d\n",num_changes);
+    if(_debug)
+        printf("num changes = %d\n",num_changes);
     if(num_changes <= tolerance * n_samples)
         return -1;
     uint32_t zero = 0;
@@ -241,14 +247,19 @@ cudaError_t kmeans_cuda( InitMethod init, float tolerance, uint32_t n_samples,
     //arbitrary - set maxiter to 500
     for(int i = 0; i < 500; i++)
     {
-        printf("grid size is %dx%d, block size is %dx%d and shared mem needed is %d\n"
-                , sample_grid.x, sample_grid.y, sample_block.x,
-                sample_block.y, smem_size);
+        if(_debug)
+        {
+            printf("In iteration %d\n",i);
+            printf("grid size is %dx%d, block size is %dx%d and shared mem needed is %d\n"
+                    , sample_grid.x, sample_grid.y, sample_block.x,
+                    sample_block.y, smem_size);
+        }
         nearest_cluster_assign<<<sample_grid,sample_block,smem_size>>>( samples,
                 centroids, memberships, memberships_old);
         gpuErrchk( cudaPeekAtLastError() );
         int change_ratio_good = check_change_ratio(tolerance, n_samples);
-        printf("change ratio is %d\n",change_ratio_good);
+        if(_debug)
+            printf("change ratio is %d\n",change_ratio_good);
         if(change_ratio_good<0)
         {
             if(iterations)

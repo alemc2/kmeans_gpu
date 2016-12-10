@@ -133,11 +133,11 @@ float** file_read(int   isBinaryFile,  /* flag: 0 or 1 */
 
 /*---< file_write() >---------------------------------------------------------*/
 int file_write(char      *filename,     /* input file name */
-               int        numClusters,  /* no. clusters */
-               int        numObjs,      /* no. data objects */
-               int        numCoords,    /* no. coordinates (local) */
+               uint32_t        numClusters,  /* no. clusters */
+               uint32_t        numObjs,      /* no. data objects */
+               uint32_t        numCoords,    /* no. coordinates (local) */
                float    **clusters,     /* [numClusters][numCoords] centers */
-               int       *membership)   /* [numObjs] */
+               uint32_t       *membership)   /* [numObjs] */
 {
     FILE *fptr;
     int   i, j;

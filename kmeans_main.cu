@@ -37,6 +37,8 @@ int main(int argc, char * argv[])
     float **samples;
     float *samples_T;
     float *clusters;
+    float **clusters_2d;
+    float *clusters_T;
     float *d_samples, *d_clusters;
     uint32_t *d_memberships;
     int numIterations;
@@ -77,7 +79,7 @@ int main(int argc, char * argv[])
     membership = (uint32_t *) malloc(numSamples * sizeof(uint32_t));
     assert(membership != NULL);
 
-    memset(membership, 0, numSamples
+    memset(membership, numClusters, numSamples
              * sizeof(uint32_t));
 
     samples_T = transpose(samples[0], numSamples, numFeatures);
@@ -85,6 +87,11 @@ int main(int argc, char * argv[])
     clusters = (float *) malloc(numClusters * numFeatures * sizeof(float));
     init_centroids( InitMethodRandom, numSamples, numFeatures, numClusters,
             seed, samples_T, clusters);
+    if(_debug)
+    {
+        printf("init clusters are as follows:\n");
+        print2d(clusters,numFeatures,numClusters);
+    }
 
     //GPU part
     gpuErrchk(cudaMalloc((void **) &d_samples, numSamples * numFeatures *
@@ -103,6 +110,23 @@ int main(int argc, char * argv[])
     kmeans_cuda( InitMethodRandom, threshold, numSamples, numFeatures,
             numClusters, seed, d_samples, d_clusters, d_memberships,
             &numIterations);
+
+    gpuErrchk(cudaMemcpy(clusters, d_clusters, numClusters * numFeatures *
+                sizeof(float), cudaMemcpyDeviceToHost));
+    gpuErrchk(cudaMemcpy(membership, d_memberships, numSamples *
+                sizeof(uint32_t), cudaMemcpyDeviceToHost));
+
+    clusters_T = transpose(clusters, numFeatures, numClusters);
+    clusters_2d = (float**)malloc(numClusters * sizeof(float*));
+    for(uint32_t i = 0; i < numClusters; i++)
+        clusters_2d[i] = clusters_T + i * numFeatures;
+    if(_debug)
+    {
+        printf("post cluster centroids are:\n");
+        print2d(clusters,numFeatures,numClusters);
+    }
+    file_write(filename, numClusters, numSamples, numFeatures, clusters_2d,
+            membership);
     printf("It ran %d number of iterations\n", numIterations);
     return 1;
 }

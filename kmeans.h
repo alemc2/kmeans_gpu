@@ -10,6 +10,9 @@
 #include <stdio.h>
 #include <assert.h>
 
+/* To index element (i,j) of a 2D array stored as 1D */
+#define index(i, j, N) ((i) * (N)) + (j)
+
 #define gpuErrchk(ans) \
     { gpuAssert((ans), __FILE__, __LINE__); }
 inline void gpuAssert(cudaError_t code, const char *file, int line,
@@ -29,9 +32,11 @@ __host__ __device__ int copy_vectors(float *dst_vec, float *src_vec,
                                      const uint32_t src_skip);
 
 float **file_read(int, char *, uint32_t *, uint32_t *);
-int file_write(char *, int, int, int, float **, int *);
+int file_write(char *, uint32_t, uint32_t, uint32_t, float **, uint32_t *);
 
 float *transpose(float *src, uint32_t n_samples, uint32_t n_features);
+void print1d(uint32_t *src, uint32_t dim);
+void print2d(float *src, uint32_t dim1, uint32_t dim2);
 
 /// @brief Performs K-means clustering on GPU / CUDA.
 /// @param init centroids initialization method.
@@ -56,4 +61,5 @@ int init_centroids(InitMethod method, uint32_t n_samples, uint32_t n_features,
                    uint32_t n_clusters, uint32_t seed, float *h_samples,
                    float *h_centroids);
 
+extern int _debug;
 #endif
