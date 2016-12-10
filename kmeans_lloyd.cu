@@ -16,6 +16,18 @@ __constant__ uint32_t num_samples;
 __constant__ uint32_t num_clusters;
 __constant__ uint32_t shmem_size;
 
+// https://devblogs.nvidia.com/parallelforall/cuda-pro-tip-optimized-filtering-warp-aggregated-atomics/
+__device__ __forceinline__ uint32_t atomicAggInc(uint32_t *ctr) {
+  int mask = __ballot(1);
+  int leader = __ffs(mask) - 1;
+  uint32_t res;
+  if ((threadIdx.x % 32) == leader) {
+    res = atomicAdd(ctr, __popc(mask));
+  }
+  res = __shfl(res, leader);
+  return res + __popc(mask & ((1 << (threadIdx.x % 32)) - 1));
+}
+
 
 __device__ float distance( float *sample1, float * sample2, uint32_t
         incr1, uint32_t incr2);
@@ -98,8 +110,13 @@ __global__ void nearest_cluster_assign( float *samples, float *centroids,
             }
         }
     }
-    membership_old[sample_idx] = membership[sample_idx];
-    membership[sample_idx] = nearest_cluster;
+    uint32_t mem_old = membership[sample_idx];
+    membership_old[sample_idx] = mem_old;
+    if(mem_old != nearest_cluster)
+    {
+        membership[sample_idx] = nearest_cluster;
+        atomicAggInc(&mem_change_ctr);
+    }
 }
 
 __global__ void adjust_centroids( float *samples, float *centroids, uint32_t
@@ -197,6 +214,7 @@ int check_change_ratio(float tolerance, uint32_t n_samples)
     uint32_t num_changes = 0;
     gpuErrchk(cudaMemcpyFromSymbol(&num_changes, mem_change_ctr,
                 sizeof(num_changes)));
+    printf("numchanges = %d\n",num_changes);
     if(num_changes <= tolerance * n_samples)
         return -1;
     uint32_t zero = 0;
@@ -212,8 +230,8 @@ cudaError_t kmeans_cuda( InitMethod init, float tolerance, uint32_t n_samples,
     uint32_t smem_size = initTasks(n_samples, n_clusters, n_features);
     dim3 sample_block(BLOCK_SZ_CNT_ASS);
     dim3 centroid_block(BLOCK_SZ_CNT_ADJ);
-    dim3 sample_grid(ceil(n_samples/sample_block.x));
-    dim3 centroid_grid(ceil(n_clusters/centroid_block.x));
+    dim3 sample_grid(ceil(1.0 * n_samples/sample_block.x));
+    dim3 centroid_grid(ceil(1.0 * n_clusters/centroid_block.x));
     uint32_t *memberships_old, *cluster_counts;
     gpuErrchk(cudaMalloc((void **) &memberships_old,
                 n_samples*sizeof(uint32_t)));
@@ -223,10 +241,14 @@ cudaError_t kmeans_cuda( InitMethod init, float tolerance, uint32_t n_samples,
     //arbitrary - set maxiter to 500
     for(int i = 0; i < 500; i++)
     {
+        printf("grid size is %dx%d, block size is %dx%d and shared mem needed is %d\n"
+                , sample_grid.x, sample_grid.y, sample_block.x,
+                sample_block.y, smem_size);
         nearest_cluster_assign<<<sample_grid,sample_block,smem_size>>>( samples,
                 centroids, memberships, memberships_old);
         gpuErrchk( cudaPeekAtLastError() );
         int change_ratio_good = check_change_ratio(tolerance, n_samples);
+        printf("change ratio is %d\n",change_ratio_good);
         if(change_ratio_good<0)
         {
             if(iterations)

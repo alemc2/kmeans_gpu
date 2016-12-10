@@ -8,6 +8,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <assert.h>
 
 #define gpuErrchk(ans) \
     { gpuAssert((ans), __FILE__, __LINE__); }
@@ -26,6 +27,11 @@ __host__ __device__ int copy_vectors(float *dst_vec, float *src_vec,
                                      const uint32_t n_dim,
                                      const uint32_t dst_skip,
                                      const uint32_t src_skip);
+
+float **file_read(int, char *, uint32_t *, uint32_t *);
+int file_write(char *, int, int, int, float **, int *);
+
+float *transpose(float *src, uint32_t n_samples, uint32_t n_features);
 
 /// @brief Performs K-means clustering on GPU / CUDA.
 /// @param init centroids initialization method.

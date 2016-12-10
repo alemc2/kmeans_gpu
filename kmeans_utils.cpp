@@ -1,6 +1,9 @@
 
 #include "kmeans.h"
 
+/* To index element (i,j) of a 2D array stored as 1D */
+#define index(i, j, N) ((i) * (N)) + (j)
+
 void shuffle(uint32_t *array, uint32_t n) {
     if (n > 1) {
         uint32_t i;
@@ -11,6 +14,19 @@ void shuffle(uint32_t *array, uint32_t n) {
             array[i] = t;
         }
     }
+}
+
+// src is assumed to be a n_samplesxn_features matrix
+float *transpose(float *src, uint32_t n_samples, uint32_t n_features) {
+    float *dst;
+    dst = (float *)malloc(n_samples * n_features * sizeof(float));
+    uint32_t i, j;
+    for (i = 0; i < n_features; i++) {
+        for (j = 0; j < n_samples; j++) {
+            dst[index(i, j, n_samples)] = src[index(j, i, n_features)];
+        }
+    }
+    return dst;
 }
 
 __host__ __device__ int copy_vectors(float *dst_vec, float *src_vec,
