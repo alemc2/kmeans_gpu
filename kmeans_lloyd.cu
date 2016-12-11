@@ -77,7 +77,7 @@ __global__ void nearest_cluster_assign( float *samples, float *centroids,
     //TODO: define min if needed
     uint32_t nactive_threads = min(blockDim.x, num_samples - blockIdx.x *
             blockDim.x);
-    uint32_t thread_num_shared_process = ceilf(max_shared_centroids /
+    uint32_t thread_num_shared_process = ceilf(1.0 * max_shared_centroids /
             nactive_threads);
     //Load a batch of centroids to shared and compute pairwise distance between
     //the current point and all centroids
@@ -148,7 +148,7 @@ __global__ void adjust_centroids( float *samples, float *centroids, uint32_t
     uint32_t sample_step = shmem_size/(2*sizeof(uint32_t));
     uint32_t nactive_threads = min(blockDim.x, num_clusters - blockIdx.x *
             blockDim.x);
-    uint32_t samples_per_thread = ceilf(sample_step/nactive_threads);
+    uint32_t samples_per_thread = ceilf(1.0*sample_step/nactive_threads);
     //Mask off shared mem stuff for now.
     //for(uint32_t sample_start = 0; sample_start < num_samples; sample_start +=
     //        sample_step)
