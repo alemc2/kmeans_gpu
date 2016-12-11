@@ -22,6 +22,7 @@ void usage(char *argv0, float threshold) {
         "       -n num_clusters: number of clusters (K must > 1)\n"
         "       -t threshold   : threshold value (default %.4f)\n"
         "       -c clusters    : file containg clusters to initialize to\n"
+        "       -o             : output timing results (default no)\n"
         "       -d             : enable debug mode\n";
     fprintf(stderr, help, argv0, threshold);
     exit(-1);
@@ -32,7 +33,7 @@ int main(int argc, char * argv[])
     int opt;
     extern char *optarg;
     extern int optind;
-    int isBinaryFile;
+    int isBinaryFile, is_output_timing;
     Init_Method cluster_method;
     char *cluster_file;
     uint32_t numClusters, numFeatures, numSamples;
@@ -49,12 +50,17 @@ int main(int argc, char * argv[])
     int numIterations;
     float threshold;
     uint32_t seed;
+
+    // Time realted variables
+    double io_time,cuda_time,compute_time;
+    clock_t io_start, io_end, cuda_start, cuda_end, compute_start, compute_end;
     
     /* some default values */
     _debug           = 0;
     threshold        = 0.001;
     numClusters      = 0;
     isBinaryFile     = 0;
+    is_output_timing = 0;
     cluster_method   = InitMethodRandom;
     cluster_file     = NULL;
     filename         = NULL;
@@ -72,6 +78,8 @@ int main(int argc, char * argv[])
                       break;
             case 'n': numClusters = atoi(optarg);
                       break;
+            case 'o': is_output_timing = 1;
+                      break;
             case 'd': _debug = atoi(optarg);
                       break;
             case '?': usage(argv[0], threshold);
@@ -83,6 +91,8 @@ int main(int argc, char * argv[])
 
     if (filename == 0 || numClusters <= 1) usage(argv[0], threshold);
     if (cluster_method == InitMethodImport && cluster_file == 0) usage(argv[0], threshold);
+
+    if(is_output_timing) io_start = clock();
 
     samples = file_read(isBinaryFile, filename, &numSamples, &numFeatures);
     if(samples == NULL) exit(1);
@@ -125,6 +135,12 @@ int main(int argc, char * argv[])
         printf("init clusters are as follows:\n");
         print2d(clusters,numFeatures,numClusters);
     }
+    if(is_output_timing)
+    {
+        io_end = clock();
+        io_time = ((double)(io_end - io_start)) / CLOCKS_PER_SEC;
+        cuda_start = clock();
+    }
 
     //GPU part
     gpuErrchk(cudaMalloc((void **) &d_samples, numSamples * numFeatures *
@@ -145,14 +161,25 @@ int main(int argc, char * argv[])
     gpuErrchk(cudaMemcpy(d_memberships, membership, numSamples *
                 sizeof(uint32_t), cudaMemcpyHostToDevice));
     
+    if(is_output_timing)
+        compute_start = clock();
     kmeans_cuda( InitMethodRandom, threshold, numSamples, numFeatures,
             numClusters, seed, d_samples, d_clusters, d_memberships,
             &numIterations);
+    if(is_output_timing)
+        compute_end = clock();
 
     gpuErrchk(cudaMemcpy(clusters, d_clusters, numClusters * numFeatures *
                 sizeof(float), cudaMemcpyDeviceToHost));
     gpuErrchk(cudaMemcpy(membership, d_memberships, numSamples *
                 sizeof(uint32_t), cudaMemcpyDeviceToHost));
+    if(is_output_timing)
+    {
+        cuda_end = clock();
+        cuda_time = ((double)(cuda_end - cuda_start)) / CLOCKS_PER_SEC;
+        compute_time = ((double)(compute_end - compute_start)) / CLOCKS_PER_SEC;
+        io_start = clock();
+    }
 
     clusters_T = transpose(clusters, numFeatures, numClusters);
     clusters_2d = (float**)malloc(numClusters * sizeof(float*));
@@ -165,6 +192,21 @@ int main(int argc, char * argv[])
     }
     file_write(filename, numClusters, numSamples, numFeatures, clusters_2d,
             membership);
+    if(is_output_timing)
+    {
+        io_end = clock();
+        io_time += ((double)(io_end - io_start)) / CLOCKS_PER_SEC;
+        printf("I/O time = %10.4f s\n",io_time);
+        printf("CUDA time = %10.4f s\n",cuda_time);
+        printf("only compute time = %10.4f s\n",compute_time);
+    }
     printf("It ran %d number of iterations\n", numIterations);
+    free(samples[0]);
+    free(samples);
+    free(membership);
+    free(samples_T);
+    free(clusters);
+    free(clusters_T);
+    free(clusters_2d);
     return 0;
 }
