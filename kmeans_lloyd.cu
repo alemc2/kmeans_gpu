@@ -251,6 +251,12 @@ __global__ void adjust_centroids( float *samples, float *centroids, uint32_t
             }
         }
     }
+    //TODO: In the case where cluster counts goes to 0, Currently the centrods
+    //will become nan and no sample will have membership to that cluster. This
+    //seems perfectly acceptable, however in the future it might be better to
+    //retain the centroid as is with counts 0 so that it ay pick back up at a
+    //different iteration. This is hard to do with current structure without
+    //replicating clusters in memory.
     // Average the centroid
     #pragma unroll 4
     for(uint32_t i = 0; i < num_features; i++)
