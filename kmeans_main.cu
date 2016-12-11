@@ -128,13 +128,6 @@ int main(int argc, char * argv[])
     {
         clusters = (float *) malloc(numClusters * numFeatures * sizeof(float));
     }
-    init_centroids( cluster_method, numSamples, numFeatures, numClusters,
-            seed, samples_T, clusters);
-    if(_debug)
-    {
-        printf("init clusters are as follows:\n");
-        print2d(clusters,numFeatures,numClusters);
-    }
     if(is_output_timing)
     {
         io_end = clock();
@@ -143,23 +136,36 @@ int main(int argc, char * argv[])
     }
 
     //GPU part
+    cudaStream_t stream = 0;
+#if optimLevel==1
+    gpuErrchk(cudaStreamCreate(&stream));
+#endif
     gpuErrchk(cudaMalloc((void **) &d_samples, numSamples * numFeatures *
                 sizeof(float)));
     gpuErrchk(cudaMalloc((void **) &d_clusters, numClusters * numFeatures *
                 sizeof(float)));
     gpuErrchk(cudaMalloc((void **) &d_memberships, numSamples *
                 sizeof(uint32_t)));
-    gpuErrchk(cudaMemcpy(d_samples, samples_T, numSamples * numFeatures *
-                sizeof(float), cudaMemcpyHostToDevice));
-    gpuErrchk(cudaMemcpy(d_clusters, clusters, numClusters * numFeatures *
-                sizeof(float), cudaMemcpyHostToDevice));
+    gpuErrchk(cudaMemcpyAsync(d_samples, samples_T, numSamples * numFeatures *
+                sizeof(float), cudaMemcpyHostToDevice, stream));
+    //moving init_centroid here so that in async cpu and gpu can work in
+    //parallel
+    init_centroids( cluster_method, numSamples, numFeatures, numClusters,
+            seed, samples_T, clusters);
+    if(_debug)
+    {
+        printf("init clusters are as follows:\n");
+        print2d(clusters,numFeatures,numClusters);
+    }
+    gpuErrchk(cudaMemcpyAsync(d_clusters, clusters, numClusters * numFeatures *
+                sizeof(float), cudaMemcpyHostToDevice, stream));
     if(_debug > 1)
     {
         printf("printing cpu mem\n");
         print1d(membership,numSamples);
     }
-    gpuErrchk(cudaMemcpy(d_memberships, membership, numSamples *
-                sizeof(uint32_t), cudaMemcpyHostToDevice));
+    gpuErrchk(cudaMemcpyAsync(d_memberships, membership, numSamples *
+                sizeof(uint32_t), cudaMemcpyHostToDevice, stream));
     
     if(is_output_timing)
         compute_start = clock();

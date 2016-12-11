@@ -49,6 +49,7 @@ __device__ float distance( float *sample1, float *sample2, uint32_t incr1,
         uint32_t incr2)
 {
     float ret_distance = 0;
+    #pragma unroll 4
     for(int i=0;i<num_features;i++)
         ret_distance +=
             (sample1[i*incr1]-sample2[i*incr2])*(sample1[i*incr1]-sample2[i*incr2]);
@@ -91,6 +92,7 @@ __global__ void nearest_cluster_assign( float *samples, float *centroids,
             //Confused in offsets, put a conditional here to be safe
             if(global_offset<num_clusters && local_offset<max_shared_centroids)
             {
+                #pragma unroll 4
                 for(uint32_t feature_idx=0; feature_idx<num_features;
                         feature_idx++)
                 {
@@ -241,6 +243,7 @@ __global__ void adjust_centroids( float *samples, float *centroids, uint32_t
         }
         if(sign)
         {
+            #pragma unroll 4
             for(uint32_t feature = 0; feature < num_features; feature++)
             {
                 centroids[feature * num_clusters] += sign *
@@ -249,6 +252,7 @@ __global__ void adjust_centroids( float *samples, float *centroids, uint32_t
         }
     }
     // Average the centroid
+    #pragma unroll 4
     for(uint32_t i = 0; i < num_features; i++)
     {
         //if(d_debug)
@@ -265,6 +269,10 @@ __global__ void adjust_centroids( float *samples, float *centroids, uint32_t
     //                centroid_idx, tmp, centroids[index(tmp,0,num_clusters)],
     //                cluster_count);
     //}
+}
+
+__global__ void dummy_kernel()
+{
 }
 
 //Debugging functions
@@ -296,33 +304,59 @@ __global__ void verify_memberships(uint32_t *memberships, uint32_t *cc)
 uint32_t initTasks(uint32_t n_samples, uint32_t n_clusters, uint32_t
         n_features, int dev_num=0)
 {
-    gpuErrchk(cudaMemcpyToSymbol(num_samples, &n_samples, sizeof(n_samples)));
-    gpuErrchk(cudaMemcpyToSymbol(num_clusters, &n_clusters, sizeof(n_clusters)));
-    gpuErrchk(cudaMemcpyToSymbol(num_features, &n_features, sizeof(n_features)));
     cudaDeviceProp props;
     gpuErrchk(cudaSetDevice(dev_num));
     gpuErrchk(cudaGetDeviceProperties(&props, dev_num));
     uint32_t smem_size = props.sharedMemPerBlock;
     if(_debug)
-        printf("gpu %d has %u bytes of shared memory\n", dev_num, smem_size); 
-    gpuErrchk(cudaMemcpyToSymbol(shmem_size, &smem_size, sizeof(smem_size)));
+        printf("gpu %d has %u bytes of shared memory\n", dev_num, smem_size);
+    //Not sure if this helps as <64kb transfers are supposed to exit async
+    //anyways
+    cudaStream_t stream = 0;
+#if optimLevel==1
+    gpuErrchk(cudaStreamCreate(&stream));
+#endif
+    gpuErrchk(cudaMemcpyToSymbolAsync(num_samples, &n_samples,
+                sizeof(n_samples), 0, cudaMemcpyHostToDevice, stream));
+    gpuErrchk(cudaMemcpyToSymbolAsync(num_clusters, &n_clusters,
+                sizeof(n_clusters), 0, cudaMemcpyHostToDevice, stream));
+    gpuErrchk(cudaMemcpyToSymbolAsync(num_features, &n_features,
+                sizeof(n_features), 0, cudaMemcpyHostToDevice, stream));
+    gpuErrchk(cudaMemcpyToSymbolAsync(shmem_size, &smem_size, sizeof(smem_size),
+                0, cudaMemcpyHostToDevice, stream));
     uint32_t zero = 0;
-    gpuErrchk(cudaMemcpyToSymbol(mem_change_ctr, &zero, sizeof(zero)));
-    gpuErrchk(cudaMemcpyToSymbol(d_debug, &_debug, sizeof(_debug)));
+    gpuErrchk(cudaMemcpyToSymbolAsync(mem_change_ctr, &zero, sizeof(zero), 0,
+                cudaMemcpyHostToDevice, stream));
+    gpuErrchk(cudaMemcpyToSymbolAsync(d_debug, &_debug, sizeof(_debug), 0,
+                cudaMemcpyHostToDevice, stream));
+#if optimLevel==1
+    //Safe to do as it will only remove once all work is done but return
+    //immediately
+    gpuErrchk(cudaStreamDestroy(stream));
+#endif
     return smem_size;
 }
 
 int check_change_ratio(float tolerance, uint32_t n_samples)
 {
     uint32_t num_changes = 0;
-    gpuErrchk(cudaMemcpyFromSymbol(&num_changes, mem_change_ctr,
-                sizeof(num_changes)));
+    cudaStream_t stream = 0;
+#if optimLevel==1
+    gpuErrchk(cudaStreamCreate(&stream));
+#endif
+    gpuErrchk(cudaMemcpyFromSymbolAsync(&num_changes, mem_change_ctr,
+                sizeof(num_changes), 0, cudaMemcpyDeviceToHost, stream));
+    uint32_t zero = 0;
+    gpuErrchk(cudaMemcpyToSymbolAsync(mem_change_ctr, &zero, sizeof(zero), 0,
+                cudaMemcpyHostToDevice, stream));
+    gpuErrchk(cudaStreamSynchronize(stream));
+#if optimLevel==1
+    gpuErrchk(cudaStreamDestroy(stream));
+#endif
     if(_debug)
         printf("num changes = %u\n",num_changes);
     if(num_changes <= tolerance * n_samples)
         return -1;
-    uint32_t zero = 0;
-    gpuErrchk(cudaMemcpyToSymbol(mem_change_ctr, &zero, sizeof(zero)));
     return 0;
 }
 
@@ -337,6 +371,11 @@ cudaError_t kmeans_cuda( InitMethod init, float tolerance, uint32_t n_samples,
     dim3 sample_grid(ceil(1.0 * n_samples/sample_block.x));
     dim3 centroid_grid(ceil(1.0 * n_clusters/centroid_block.x));
     uint32_t *memberships_old, *cluster_counts;
+    cudaStream_t stream1 = 0, stream2 = 0;
+#if optimLevel==1
+    gpuErrchk(cudaStreamCreate(&stream1));
+    gpuErrchk(cudaStreamCreate(&stream2));
+#endif
     gpuErrchk(cudaMalloc((void **) &memberships_old,
                 n_samples*sizeof(uint32_t)));
     gpuErrchk(cudaMalloc((void **) &cluster_counts,
@@ -344,12 +383,24 @@ cudaError_t kmeans_cuda( InitMethod init, float tolerance, uint32_t n_samples,
     uint32_t *cc_verification;
     if(_debug > 1)
     {
+#if optimLevel==1
+        //Put this to sync all transfers as we want to copy membership -- really
+        //pointles but put in for debug
+        gpuErrchk(cudaDeviceSynchronize());
+#endif
         gpuErrchk(cudaMalloc((void **) &cc_verification,
                     n_clusters*sizeof(uint32_t)));
         gpuErrchk(cudaMemcpy( memberships_old, memberships, n_samples *
                     sizeof(uint32_t), cudaMemcpyDeviceToDevice));
     }
-    gpuErrchk(cudaMemset(cluster_counts, 0, n_clusters*sizeof(uint32_t)));
+    gpuErrchk(cudaMemsetAsync(cluster_counts, 0, n_clusters*sizeof(uint32_t),
+                stream1));
+    //Call dummy kernel to setup init?
+    dummy_kernel<<<1,1,0,stream2>>>();
+    gpuErrchk( cudaPeekAtLastError() );
+#if optimLevel==1
+    gpuErrchk(cudaDeviceSynchronize());
+#endif
     //arbitrary - set maxiter to 500
     for(int i = 0; i < 500; i++)
     {
@@ -360,34 +411,63 @@ cudaError_t kmeans_cuda( InitMethod init, float tolerance, uint32_t n_samples,
                     , sample_grid.x, sample_grid.y, sample_block.x,
                     sample_block.y, smem_size);
         }
-        nearest_cluster_assign<<<sample_grid,sample_block,smem_size>>>( samples,
+
+        nearest_cluster_assign<<<sample_grid,sample_block,smem_size,stream1>>>( samples,
                 centroids, memberships, memberships_old);
         gpuErrchk( cudaPeekAtLastError() );
+        //Syncronize here irrespective of optimLevel as it is confusing with all
+        //these streams in non optim mode. We need it synchronized here anyways.
+        gpuErrchk(cudaDeviceSynchronize());
+
+        adjust_centroids<<<centroid_grid,centroid_block,smem_size,stream1>>>( samples,
+                centroids, memberships, memberships_old, cluster_counts);
+        gpuErrchk( cudaPeekAtLastError() );
+
+        //Below function although executing in a separate stream, waits for that
+        //stream to complete before returning, so should be safe.
         int change_ratio_good = check_change_ratio(tolerance, n_samples);
         if(_debug)
         {
             printf("change ratio is %d\n",change_ratio_good);
             if(_debug > 1)
             {
-                gpuErrchk(cudaMemset(cc_verification, 0, n_clusters*sizeof(uint32_t)));
-                verify_memberships<<<1,1>>>(memberships, cc_verification);
-                verify_counts<<<1,1>>>(cc_verification);
+                gpuErrchk(cudaMemsetAsync(cc_verification, 0,
+                            n_clusters*sizeof(uint32_t), stream2));
+                verify_memberships<<<1,1,0,stream2>>>(memberships, cc_verification);
+                verify_counts<<<1,1,0,stream2>>>(cc_verification);
             }
         }
+        //Syncronize here irrespective of optimLevel as it is confusing with all
+        //these streams in non optim mode. We need it synchronized here anyways.
+        gpuErrchk(cudaDeviceSynchronize());
         if(change_ratio_good<0)
         {
             if(iterations)
                 *iterations = i;
+            cudaFree(memberships_old);
+            cudaFree(cluster_counts);
+            cudaStreamDestroy(stream1);
+            cudaStreamDestroy(stream2);
+            if(_debug)
+                cudaFree(cc_verification);
             return cudaSuccess;
         }
-        adjust_centroids<<<centroid_grid,centroid_block,smem_size>>>( samples,
-                centroids, memberships, memberships_old, cluster_counts);
-        gpuErrchk( cudaPeekAtLastError() );
-
+        //Debuging to catch if total counts has messed up with respect to total
+        //number of samples
         if(_debug > 1)
         {
             verify_counts<<<1,1>>>(cluster_counts);
+            gpuErrchk(cudaDeviceSynchronize());
         }
     }
+    *iterations = 500;
+    cudaFree(memberships_old);
+    cudaFree(cluster_counts);
+#if optimLevel==1
+    cudaStreamDestroy(stream1);
+    cudaStreamDestroy(stream2);
+#endif
+    if(_debug)
+        cudaFree(cc_verification);
     return cudaSuccess;
 }
