@@ -14,9 +14,15 @@ void shuffle(uint32_t *array, uint32_t n) {
 }
 
 // src is assumed to be a n_samplesxn_features matrix
-float *transpose(float *src, uint32_t n_samples, uint32_t n_features) {
+float *transpose(float *src, uint32_t n_samples, uint32_t n_features,
+                 int pinned_result) {
     float *dst;
-    dst = (float *)malloc(n_samples * n_features * sizeof(float));
+    if (pinned_result) {
+        gpuErrchk(cudaMallocHost((void **)&dst,
+                                 n_samples * n_features * sizeof(float)));
+    } else {
+        dst = (float *)malloc(n_samples * n_features * sizeof(float));
+    }
     uint32_t i, j;
     for (i = 0; i < n_features; i++) {
         for (j = 0; j < n_samples; j++) {

@@ -96,14 +96,22 @@ int main(int argc, char * argv[])
 
     samples = file_read(isBinaryFile, filename, &numSamples, &numFeatures);
     if(samples == NULL) exit(1);
-
+#if optimLevel==1
+    gpuErrchk(cudaMallocHost((void**)&membership, numSamples *
+                sizeof(uint32_t)));
+#else
     membership = (uint32_t *) malloc(numSamples * sizeof(uint32_t));
+#endif
     assert(membership != NULL);
 
     memset(membership, 255, numSamples
              * sizeof(uint32_t));
 
+#if optimLevel==1
+    samples_T = transpose(samples[0], numSamples, numFeatures, 1);
+#else
     samples_T = transpose(samples[0], numSamples, numFeatures);
+#endif
     seed = time(NULL);
     if (cluster_method == InitMethodImport)
     {
@@ -120,13 +128,22 @@ int main(int argc, char * argv[])
             fprintf(stderr, "Cluster sizes don't match provided inputs\n");
             exit(1);
         }
+#if optimLevel==1
+        clusters = transpose(clusters_2d[0], numClusters, numFeatures,1);
+#else
         clusters = transpose(clusters_2d[0], numClusters, numFeatures);
+#endif
         free(clusters_2d[0]);
         free(clusters_2d);
     }
     else
     {
+#if optimLevel==1
+        gpuErrchk(cudaMallocHost((void**) &clusters, numClusters * numFeatures
+                    *sizeof(float)));
+#else
         clusters = (float *) malloc(numClusters * numFeatures * sizeof(float));
+#endif
     }
     if(is_output_timing)
     {
@@ -209,10 +226,20 @@ int main(int argc, char * argv[])
     printf("It ran %d number of iterations\n", numIterations);
     free(samples[0]);
     free(samples);
+#if optimLevel==1
+    gpuErrchk(cudaFreeHost(membership));
+    gpuErrchk(cudaFreeHost(samples_T));
+    gpuErrchk(cudaFreeHost(clusters));
+    gpuErrchk(cudaStreamDestroy(stream));
+#else
     free(membership);
     free(samples_T);
     free(clusters);
+#endif
     free(clusters_T);
     free(clusters_2d);
+    gpuErrchk(cudaFree(d_samples));
+    gpuErrchk(cudaFree(d_clusters));
+    gpuErrchk(cudaFree(d_memberships));
     return 0;
 }

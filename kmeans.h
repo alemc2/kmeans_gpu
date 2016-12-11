@@ -37,7 +37,8 @@ __host__ __device__ int copy_vectors(float *dst_vec, float *src_vec,
 float **file_read(int, char *, uint32_t *, uint32_t *);
 int file_write(char *, uint32_t, uint32_t, uint32_t, float **, uint32_t *);
 
-float *transpose(float *src, uint32_t n_samples, uint32_t n_features);
+float *transpose(float *src, uint32_t n_samples, uint32_t n_features,
+                 int pinned_result = 0);
 void print1d(uint32_t *src, uint32_t dim);
 void print2d(float *src, uint32_t dim1, uint32_t dim2);
 
