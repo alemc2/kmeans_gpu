@@ -144,14 +144,15 @@ __global__ void adjust_centroids( float *samples, float *centroids, uint32_t
     {
         centroids[i*num_clusters] *= cluster_count;
     }
-    extern __shared__ uint32_t shared_memberships[];
+
+    //Mask off shared mem stuff for now.
+    //extern __shared__ uint32_t shared_memberships[];
     //Since each membership is of type uint32_t and we have old and new
     //memberships, we can load the memberships to fill half the shared memory
-    uint32_t sample_step = shmem_size/(2*sizeof(uint32_t));
-    uint32_t nactive_threads = min(blockDim.x, num_clusters - blockIdx.x *
-            blockDim.x);
-    uint32_t samples_per_thread = ceilf(1.0*sample_step/nactive_threads);
-    //Mask off shared mem stuff for now.
+    //uint32_t sample_step = shmem_size/(2*sizeof(uint32_t));
+    //uint32_t nactive_threads = min(blockDim.x, num_clusters - blockIdx.x *
+    //        blockDim.x);
+    //uint32_t samples_per_thread = ceilf(1.0*sample_step/nactive_threads);
     //for(uint32_t sample_start = 0; sample_start < num_samples; sample_start +=
     //        sample_step)
     //{
@@ -425,7 +426,7 @@ cudaError_t kmeans_cuda( InitMethod init, float tolerance, uint32_t n_samples,
         //these streams in non optim mode. We need it synchronized here anyways.
         gpuErrchk(cudaDeviceSynchronize());
 
-        adjust_centroids<<<centroid_grid,centroid_block,smem_size,stream1>>>( samples,
+        adjust_centroids<<<centroid_grid,centroid_block,0,stream1>>>( samples,
                 centroids, memberships, memberships_old, cluster_counts);
         gpuErrchk( cudaPeekAtLastError() );
 
